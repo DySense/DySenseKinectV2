@@ -14,6 +14,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
 using System.IO;
+using System.ComponentModel;
 
 namespace DySenseKinectV2
 {
@@ -25,8 +26,20 @@ namespace DySenseKinectV2
         public MainWindow()
         {
             InitializeComponent();
+            this.Hide();
 
             string[] args = Environment.GetCommandLineArgs();
+
+            // Have to create/run sensor driver on a separate thread so can process the event queue on the main thread.
+            // TODO - try to get away from using a window at all. 
+            BackgroundWorker programWorker = new BackgroundWorker();
+            programWorker.DoWork += programWorker_DoWork;
+            programWorker.RunWorkerAsync(args);
+        }
+
+        void programWorker_DoWork(object sender, DoWorkEventArgs e)
+        {
+            string[] args = (string[])(e.Argument);
             Program.Main(args);
         }
     }

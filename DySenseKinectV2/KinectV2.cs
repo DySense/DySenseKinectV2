@@ -14,172 +14,230 @@ namespace DySenseKinectV2
 {
     public class KinectV2 : SensorBase
     {
-        #region Members
-
         // How often to save the streams (in seconds). If negative then don't save. 0 captures at max rate.
         double colorCapturePeriod = 0;
         double depthCapturePeriod = 0;
         double irCapturePeriod = 0;
 
-        KinectSensor _sensor;
-        MultiSourceFrameReader _reader;
+        // Set to false if the stream shouldn't be saved at all.
+        bool colorEnabled = true;
+        bool depthEnabled = true;
+        bool infraredEnabled = true;
 
-        ImageSource _lastColor;
-        ushort[] _depthData;
-        ImageSource _lastIR;
+        // Microsoft SDK object references.
+        KinectSensor sensor;
+        MultiSourceFrameReader reader;
 
-        // Time stamps of last read in images.
-        double _lastColorTime;
-        double _lastDepthTime;
-        double _lastIRTime;
+        // Save depth data array so we can re-use it.
+        ushort[] depthData;
+
+        // Time stamps of last read in images/data.
+        double lastColorTime = 0;
+        double lastDepthTime = 0;
+        double lastInfraredTime = 0;
 
         // Where to save output images to.
         string outDirectory;
-
-        #endregion
 
         public KinectV2(string sensorID, Dictionary<string, object> settings, string connectEndpoint)
             : base(sensorID, connectEndpoint)
         {
             this.outDirectory = Convert.ToString(settings["out_directory"]);
-            this.colorCapturePeriod = Convert.ToDouble(settings["color_capture_period"]);
-            this.depthCapturePeriod = Convert.ToDouble(settings["depth_capture_period"]);
-            this.irCapturePeriod = Convert.ToDouble(settings["ir_capture_period"]);
+            this.colorCapturePeriod = Convert.ToDouble(settings["color_period"]);
+            this.depthCapturePeriod = Convert.ToDouble(settings["depth_period"]);
+            this.irCapturePeriod = Convert.ToDouble(settings["ir_period"]);
 
-            base.MaxClosingTime = 3.0; // TODO
-            base.MinLoopPeriod = Math.Min(Math.Min(colorCapturePeriod, depthCapturePeriod), irCapturePeriod);
+            this.colorEnabled = colorCapturePeriod >= 0;
+            this.depthEnabled = depthCapturePeriod >= 0;
+            this.infraredEnabled = irCapturePeriod >= 0;
+
+            base.MaxClosingTime = 4.0; // seconds
         }
 
         protected override void Setup()
         {
-            _sensor = KinectSensor.GetDefault();
+            sensor = KinectSensor.GetDefault();
 
-            if (_sensor != null)
+            if (sensor != null)
             {
-                _sensor.Open();
+                sensor.Open();
 
-                _reader = _sensor.OpenMultiSourceFrameReader(FrameSourceTypes.Color | FrameSourceTypes.Depth | FrameSourceTypes.Infrared);
-                _reader.MultiSourceFrameArrived += Reader_MultiSourceFrameArrived;
+                reader = sensor.OpenMultiSourceFrameReader(FrameSourceTypes.Color | FrameSourceTypes.Depth | FrameSourceTypes.Infrared);
+                reader.MultiSourceFrameArrived += Reader_MultiSourceFrameArrived;
+            }
+
+            if (!Directory.Exists(outDirectory))
+            {
+                Directory.CreateDirectory(outDirectory);
             }
         }
 
         protected override void Close()
         {
-            if (_reader != null)
+            if (reader != null)
             {
-                _reader.Dispose();
+                reader.Dispose();
             }
 
-            if (_sensor != null)
+            if (sensor != null)
             {
-                _sensor.Close();
+                sensor.Close();
             }
         }
 
         protected override bool IsClosed()
         {
-            return (_reader == null) && (_sensor == null);
+            return (reader == null) && (sensor == null);
         }
 
         protected override void ReadNewData()
         {
-            bool success = true;
+            // Sensor data is recorded in the new frame event callback. This just checks if data is still coming in.
+            bool receivingOk = VerifyReceivingData();
 
-            bool needToSaveColor = (SysTime - _lastColorTime) > colorCapturePeriod;
-            bool colorEnabled = colorCapturePeriod >= 0;
-            if (colorEnabled && needToSaveColor)
+            Health = receivingOk ? "good" : "bad";
+
+            WaitForNextLoop();
+        }
+
+        bool VerifyReceivingData()
+        {
+            // Need to use Math.Max() since the period could be 0 to signify max rate.
+            bool receivingOk = true;
+            if (colorEnabled)
             {
-                if (_lastColor != null)
-                {
-                    string filePath = System.IO.Path.Combine(outDirectory, "Color.jpg");
-                    Extensions.WriteJpeg(filePath, 90, (BitmapSource)_lastColor);
-                    HandleData(new Dictionary<string, object>() { { "utc_time", Time }, { "sys_time", SysTime }, { "file_path", filePath } });
-                    _lastColor = null; // so don't accidentally save same image twice.
-                }
-                else
-                {
-                    success = false;
-                }
+                double timeSinceLastReceived = Time - lastColorTime;
+                receivingOk = timeSinceLastReceived < (2 * Math.Max(colorCapturePeriod, 0.1));
+            }
+            if (depthEnabled)
+            {
+                double timeSinceLastReceived = Time - lastDepthTime;
+                receivingOk = timeSinceLastReceived < (2 *  Math.Max(depthCapturePeriod, 0.1));
+            }
+            if (infraredEnabled)
+            {
+                double timeSinceLastReceived = Time - lastInfraredTime;
+                receivingOk = timeSinceLastReceived < (2 * Math.Max(irCapturePeriod, 0.1));
             }
 
-            if (false)
-            {
-                if (_lastIR != null)
-                {
-                    Extensions.WriteJpeg(System.IO.Path.Combine(outDirectory, "IR.jpg"), 90, (BitmapSource)_lastIR);
-                    _lastIR = null; // so don't accidentally save same image twice.
-                }
-                else
-                {
-                    success = false;
-                }
-            }
-
-            if (false)
-            {
-                if (_depthData != null)
-                {
-                    // write out depth data as binary file
-                    string depthDataPath = System.IO.Path.Combine(outDirectory, "DepthData.bin");
-                    using (FileStream fs = new FileStream(depthDataPath, FileMode.Create, FileAccess.Write))
-                    {
-                        using (BinaryWriter bw = new BinaryWriter(fs))
-                        {
-                            foreach (short depthValue in _depthData)
-                            {
-                                bw.Write(depthValue);
-                            }
-                        }
-                    }
-                }
-                else
-                {
-                    success = false;
-                }
-
-                Health = success ? "good" : "bad";
-            }
+            return receivingOk;
         }
 
         void Reader_MultiSourceFrameArrived(object sender, MultiSourceFrameArrivedEventArgs e)
         {
-            var reference = e.FrameReference.AcquireFrame();
+            // Grab a time reference right away to minimize the delay between capturing an image and timestamping it.
+            // Doing this once at the beginning will also make it so processing one type image won't affect the time of another.
+            double captureTime = Time;
 
+            var reference = e.FrameReference.AcquireFrame();
+            
             // Color
-            using (var frame = reference.ColorFrameReference.AcquireFrame())
+            bool needToSaveColor = (Time - lastColorTime) > colorCapturePeriod;
+            if (colorEnabled && needToSaveColor)
             {
-                if (frame != null)
+                using (var frame = reference.ColorFrameReference.AcquireFrame())
                 {
-                    _lastColorTime = Time;
-                    _lastColor = frame.ToBitmap();
+                    if (frame != null)
+                    {
+                        lastColorTime = captureTime;
+
+                        if (ShouldRecordData()) 
+                        {
+                            string fileName = uniqueFileName(reference, "COLOR", "jpg");
+                            SaveColorImage(frame, fileName);
+                            HandleData(new Dictionary<string, object>() { { "utc_time", lastColorTime }, { "sys_time", SysTime }, { "type", "color" }, { "file_name", fileName } });
+                        }
+                    }
                 }
             }
 
             // Depth
-            using (var frame = reference.DepthFrameReference.AcquireFrame())
+            bool needToSaveDepth = (Time - lastDepthTime) > depthCapturePeriod;
+            if (depthEnabled && needToSaveDepth)
             {
-                if (frame != null)
+                using (var frame = reference.DepthFrameReference.AcquireFrame())
                 {
-                    _lastDepthTime = Time;
-                    if (_depthData == null)
+                    if (frame != null)
                     {
-                        int width = frame.FrameDescription.Width;
-                        int height = frame.FrameDescription.Height;
-                        _depthData = new ushort[width * height];
+                        lastDepthTime = captureTime;
+                        // If this is the first depth data we've gotten then initialize our array since we know how big the width/height is. More flexible than hardcoding.
+                        if (depthData == null)
+                        {
+                            int width = frame.FrameDescription.Width;
+                            int height = frame.FrameDescription.Height;
+                            depthData = new ushort[width * height];
+                        }
+
+                        if (ShouldRecordData())
+                        {
+                            frame.CopyFrameDataToArray(depthData);
+                            string fileName = uniqueFileName(reference, "DEPTH", "bin");
+                            SaveDepthData(depthData, fileName);
+                            HandleData(new Dictionary<string, object>() { { "utc_time", lastDepthTime }, { "sys_time", SysTime }, { "type", "depth" }, { "file_name", fileName } });
+                        }
                     }
-                    frame.CopyFrameDataToArray(_depthData);
                 }
             }
 
             // Infrared
-            using (var frame = reference.InfraredFrameReference.AcquireFrame())
+            bool needToSaveInfrared = (Time - lastInfraredTime) > irCapturePeriod;
+            if (infraredEnabled && needToSaveInfrared)
             {
-                if (frame != null)
+                using (var frame = reference.InfraredFrameReference.AcquireFrame())
                 {
-                    _lastIRTime = Time;
-                    _lastIR = frame.ToBitmap();
+                    if (frame != null)
+                    {
+                        lastInfraredTime = captureTime;
+
+                        if (ShouldRecordData())
+                        {
+                            string fileName = uniqueFileName(reference, "IR", "jpg");
+                            SaveInfraredImage(frame, fileName);
+                            HandleData(new Dictionary<string, object>() { { "utc_time", lastInfraredTime }, { "sys_time", SysTime }, { "type", "infrared" }, { "file_name", fileName } });
+                        }
+                    }
                 }
             }
+        }
+
+        string SaveColorImage(ColorFrame frame, string fileName)
+        {
+            ImageSource image = frame.ToBitmap();
+            string filePath = System.IO.Path.Combine(outDirectory, fileName);
+            Extensions.WriteJpeg(filePath, 90, (BitmapSource)image);
+            return filePath;
+        }
+
+        string SaveInfraredImage(InfraredFrame frame, string fileName)
+        {
+            ImageSource image = frame.ToBitmap();
+            string filePath = System.IO.Path.Combine(outDirectory, fileName);
+            Extensions.WriteJpeg(filePath, 90, (BitmapSource)image);
+            return filePath;
+        }
+
+        string SaveDepthData(ushort[] depthData, string fileName)
+        {
+            // write out depth data as binary file
+            string depthDataPath = System.IO.Path.Combine(outDirectory, fileName);
+            using (FileStream fs = new FileStream(depthDataPath, FileMode.Create, FileAccess.Write))
+            {
+                using (BinaryWriter bw = new BinaryWriter(fs))
+                {
+                    foreach (short depthValue in depthData)
+                    {
+                        bw.Write(depthValue);
+                    }
+                }
+            }
+            return depthDataPath;
+        }
+
+        string uniqueFileName(MultiSourceFrame reference, string streamType, string fileExtension)
+        {
+            string sensorID = reference.KinectSensor.UniqueKinectId;
+            string formattedTime = DateTime.UtcNow.ToString("yyyyMMdd_hhmmss_fff");
+            return String.Format("KIN_{0}_{1}_{2}.{3}", sensorID, formattedTime, streamType, fileExtension); 
         }
     }
 }

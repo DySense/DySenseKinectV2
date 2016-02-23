@@ -11,8 +11,6 @@ namespace DySenseKinectV2
 {
     public static class Extensions
     {
-        #region Camera
-
         public static ImageSource ToBitmap(this ColorFrame frame)
         {
             int width = frame.FrameDescription.Width;
@@ -68,7 +66,7 @@ namespace DySenseKinectV2
             return BitmapSource.Create(width, height, 96, 96, format, null, pixels, stride);
         }
 
-        static ushort all_time_max = 0;
+        // static ushort all_time_max = 0;
         public static ImageSource ToBitmapNonRollover(this DepthFrame frame)
         {
             int width = frame.FrameDescription.Width;
@@ -188,8 +186,5 @@ namespace DySenseKinectV2
                 encoder.Save(file);
             }
         }
-
-        #endregion
-
     }
 }

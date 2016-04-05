@@ -31,7 +31,7 @@ namespace DySenseKinectV2
         // Save depth data array so we can re-use it.
         ushort[] depthData;
 
-        // Time stamps of last read in images/data.
+        // System time stamps of last read in images/data.
         double lastColorTime = 0;
         double lastDepthTime = 0;
         double lastInfraredTime = 0;
@@ -39,8 +39,8 @@ namespace DySenseKinectV2
         // Where to save output images to.
         string outDirectory;
 
-        public KinectV2(string sensorID, Dictionary<string, object> settings, string connectEndpoint)
-            : base(sensorID, connectEndpoint)
+        public KinectV2(string sensorID, string instrumentID, Dictionary<string, object> settings, string connectEndpoint)
+            : base(sensorID, instrumentID, connectEndpoint, decideTimeout: false)
         {
             this.outDirectory = Convert.ToString(settings["out_directory"]);
             this.colorCapturePeriod = Convert.ToDouble(settings["color_period"]);
@@ -51,6 +51,9 @@ namespace DySenseKinectV2
             this.depthEnabled = depthCapturePeriod >= 0;
             this.infraredEnabled = irCapturePeriod >= 0;
 
+            // Here the read period is how often the validation check is done on if data is still being received.
+            // The actual sensor reading is done in the event handler.
+            base.DesiredReadPeriod = 0.5; // seconds
             base.MaxClosingTime = 4.0; // seconds
         }
 
@@ -90,14 +93,12 @@ namespace DySenseKinectV2
             return (reader == null) && (sensor == null);
         }
 
-        protected override void ReadNewData()
+        protected override string ReadNewData()
         {
             // Sensor data is recorded in the new frame event callback. This just checks if data is still coming in.
             bool receivingOk = VerifyReceivingData();
 
-            Health = receivingOk ? "good" : "bad";
-
-            WaitForNextLoop();
+            return receivingOk ? "normal" : "timed_out";
         }
 
         bool VerifyReceivingData()
@@ -106,18 +107,18 @@ namespace DySenseKinectV2
             bool receivingOk = true;
             if (colorEnabled)
             {
-                double timeSinceLastReceived = Time - lastColorTime;
-                receivingOk = timeSinceLastReceived < (2 * Math.Max(colorCapturePeriod, 0.1));
+                double timeSinceLastReceived = SysTime - lastColorTime;
+                receivingOk = receivingOk && (timeSinceLastReceived < (2 * Math.Max(colorCapturePeriod, 0.1)));
             }
             if (depthEnabled)
             {
-                double timeSinceLastReceived = Time - lastDepthTime;
-                receivingOk = timeSinceLastReceived < (2 *  Math.Max(depthCapturePeriod, 0.1));
+                double timeSinceLastReceived = SysTime - lastDepthTime;
+                receivingOk = receivingOk && (timeSinceLastReceived < (2 * Math.Max(depthCapturePeriod, 0.1)));
             }
             if (infraredEnabled)
             {
-                double timeSinceLastReceived = Time - lastInfraredTime;
-                receivingOk = timeSinceLastReceived < (2 * Math.Max(irCapturePeriod, 0.1));
+                double timeSinceLastReceived = SysTime - lastInfraredTime;
+                receivingOk = receivingOk && (timeSinceLastReceived < (2 * Math.Max(irCapturePeriod, 0.1)));
             }
 
             return receivingOk;
@@ -127,39 +128,40 @@ namespace DySenseKinectV2
         {
             // Grab a time reference right away to minimize the delay between capturing an image and timestamping it.
             // Doing this once at the beginning will also make it so processing one type image won't affect the time of another.
-            double captureTime = Time;
+            double captureUtcTime = UtcTime;
+            double captureSysTime = SysTime;
 
             var reference = e.FrameReference.AcquireFrame();
             
             // Color
-            bool needToSaveColor = (Time - lastColorTime) > colorCapturePeriod;
+            bool needToSaveColor = (SysTime - lastColorTime) > colorCapturePeriod;
             if (colorEnabled && needToSaveColor)
             {
                 using (var frame = reference.ColorFrameReference.AcquireFrame())
                 {
                     if (frame != null)
                     {
-                        lastColorTime = captureTime;
+                        lastColorTime = captureSysTime;
 
+                        string fileName = uniqueFileName(InstrumentID, "COLOR", "jpg");
                         if (ShouldRecordData()) 
                         {
-                            string fileName = uniqueFileName(reference, "COLOR", "jpg");
                             SaveColorImage(frame, fileName);
-                            HandleData(new Dictionary<string, object>() { { "utc_time", lastColorTime }, { "sys_time", SysTime }, { "type", "color" }, { "file_name", fileName } });
                         }
+                        HandleData(new List<object>() { captureUtcTime, SysTime, "color", fileName });
                     }
                 }
             }
 
             // Depth
-            bool needToSaveDepth = (Time - lastDepthTime) > depthCapturePeriod;
+            bool needToSaveDepth = (SysTime - lastDepthTime) > depthCapturePeriod;
             if (depthEnabled && needToSaveDepth)
             {
                 using (var frame = reference.DepthFrameReference.AcquireFrame())
                 {
                     if (frame != null)
                     {
-                        lastDepthTime = captureTime;
+                        lastDepthTime = captureSysTime;
                         // If this is the first depth data we've gotten then initialize our array since we know how big the width/height is. More flexible than hardcoding.
                         if (depthData == null)
                         {
@@ -168,33 +170,33 @@ namespace DySenseKinectV2
                             depthData = new ushort[width * height];
                         }
 
+                        string fileName = uniqueFileName(InstrumentID, "DEPTH", "bin");
                         if (ShouldRecordData())
                         {
                             frame.CopyFrameDataToArray(depthData);
-                            string fileName = uniqueFileName(reference, "DEPTH", "bin");
                             SaveDepthData(depthData, fileName);
-                            HandleData(new Dictionary<string, object>() { { "utc_time", lastDepthTime }, { "sys_time", SysTime }, { "type", "depth" }, { "file_name", fileName } });
                         }
+                        HandleData(new List<object>() { captureUtcTime, SysTime, "depth", fileName });
                     }
                 }
             }
 
             // Infrared
-            bool needToSaveInfrared = (Time - lastInfraredTime) > irCapturePeriod;
+            bool needToSaveInfrared = (SysTime - lastInfraredTime) > irCapturePeriod;
             if (infraredEnabled && needToSaveInfrared)
             {
                 using (var frame = reference.InfraredFrameReference.AcquireFrame())
                 {
                     if (frame != null)
                     {
-                        lastInfraredTime = captureTime;
+                        lastInfraredTime = captureSysTime;
 
+                        string fileName = uniqueFileName(InstrumentID, "IR", "jpg");
                         if (ShouldRecordData())
                         {
-                            string fileName = uniqueFileName(reference, "IR", "jpg");
                             SaveInfraredImage(frame, fileName);
-                            HandleData(new Dictionary<string, object>() { { "utc_time", lastInfraredTime }, { "sys_time", SysTime }, { "type", "infrared" }, { "file_name", fileName } });
                         }
+                        HandleData(new List<object>() { captureUtcTime, SysTime, "infrared", fileName });
                     }
                 }
             }
@@ -233,11 +235,10 @@ namespace DySenseKinectV2
             return depthDataPath;
         }
 
-        string uniqueFileName(MultiSourceFrame reference, string streamType, string fileExtension)
+        string uniqueFileName(string id, string streamType, string fileExtension)
         {
-            string sensorID = reference.KinectSensor.UniqueKinectId;
             string formattedTime = DateTime.UtcNow.ToString("yyyyMMdd_hhmmss_fff");
-            return String.Format("KIN_{0}_{1}_{2}.{3}", sensorID, formattedTime, streamType, fileExtension); 
+            return String.Format("KIN_{0}_{1}_{2}.{3}", id, formattedTime, streamType, fileExtension); 
         }
     }
 }

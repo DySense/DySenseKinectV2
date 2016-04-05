@@ -12,10 +12,11 @@ namespace DySenseKinectV2
         public static void Main(string[] args)
         {
             string sensorID = args[1];
-            Dictionary<string, object> settings = JsonConvert.DeserializeObject<Dictionary<string, object>>(args[2]);
-            string connectEndpoint = args[3];
+            string instrumentID = args[2];
+            Dictionary<string, object> settings = JsonConvert.DeserializeObject<Dictionary<string, object>>(args[3]);
+            string connectEndpoint = args[4];
 
-            KinectV2 kinect = new KinectV2(sensorID, settings, connectEndpoint);
+            KinectV2 kinect = new KinectV2(sensorID, instrumentID, settings, connectEndpoint);
 
             kinect.Run();
         }

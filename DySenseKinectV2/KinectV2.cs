@@ -24,6 +24,9 @@ namespace DySenseKinectV2
         bool depthEnabled = true;
         bool infraredEnabled = true;
 
+        // How much time elapses between when image is captured and when it is received (in seconds).
+        double sensorLatency;
+
         // Microsoft SDK object references.
         KinectSensor sensor;
         MultiSourceFrameReader reader;
@@ -46,6 +49,7 @@ namespace DySenseKinectV2
             this.colorCapturePeriod = Convert.ToDouble(settings["color_period"]);
             this.depthCapturePeriod = Convert.ToDouble(settings["depth_period"]);
             this.irCapturePeriod = Convert.ToDouble(settings["ir_period"]);
+            this.sensorLatency = Convert.ToDouble(settings["sensor_latency"]) / 1000.0;
 
             this.colorEnabled = colorCapturePeriod >= 0;
             this.depthEnabled = depthCapturePeriod >= 0;
@@ -128,8 +132,9 @@ namespace DySenseKinectV2
         {
             // Grab a time reference right away to minimize the delay between capturing an image and timestamping it.
             // Doing this once at the beginning will also make it so processing one type image won't affect the time of another.
-            double captureUtcTime = UtcTime;
-            double captureSysTime = SysTime;
+            // Need to subtract off the estimated amount of time the image took to process and arrive.
+            double captureUtcTime = UtcTime - this.sensorLatency;
+            double captureSysTime = SysTime - this.sensorLatency;
 
             var reference = e.FrameReference.AcquireFrame();
             
@@ -148,7 +153,7 @@ namespace DySenseKinectV2
                         {
                             SaveColorImage(frame, fileName);
                         }
-                        HandleData(new List<object>() { captureUtcTime, SysTime, "color", fileName });
+                        HandleData(captureUtcTime, SysTime, new List<object>() { "color", fileName });
                     }
                 }
             }
@@ -176,7 +181,7 @@ namespace DySenseKinectV2
                             frame.CopyFrameDataToArray(depthData);
                             SaveDepthData(depthData, fileName);
                         }
-                        HandleData(new List<object>() { captureUtcTime, SysTime, "depth", fileName });
+                        HandleData(captureUtcTime, SysTime, new List<object>() { "depth", fileName });
                     }
                 }
             }
@@ -196,7 +201,7 @@ namespace DySenseKinectV2
                         {
                             SaveInfraredImage(frame, fileName);
                         }
-                        HandleData(new List<object>() { captureUtcTime, SysTime, "infrared", fileName });
+                        HandleData(captureUtcTime, SysTime, new List<object>() { "infrared", fileName });
                     }
                 }
             }

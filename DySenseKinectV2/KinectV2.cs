@@ -39,13 +39,10 @@ namespace DySenseKinectV2
         double lastDepthTime = 0;
         double lastInfraredTime = 0;
 
-        // Where to save output images to.
-        string outDirectory;
-
         public KinectV2(string sensorID, string instrumentID, Dictionary<string, object> settings, string connectEndpoint)
             : base(sensorID, instrumentID, connectEndpoint, decideTimeout: false)
         {
-            this.outDirectory = Convert.ToString(settings["out_directory"]);
+            this.defaultDataFileDirectory = Convert.ToString(settings["out_directory"]);
             this.colorCapturePeriod = Convert.ToDouble(settings["color_period"]);
             this.depthCapturePeriod = Convert.ToDouble(settings["depth_period"]);
             this.irCapturePeriod = Convert.ToDouble(settings["ir_period"]);
@@ -73,9 +70,9 @@ namespace DySenseKinectV2
                 reader.MultiSourceFrameArrived += Reader_MultiSourceFrameArrived;
             }
 
-            if (!Directory.Exists(outDirectory))
+            if (!String.IsNullOrWhiteSpace(CurrentDataFileDirectory) && !Directory.Exists(CurrentDataFileDirectory))
             {
-                Directory.CreateDirectory(outDirectory);
+                Directory.CreateDirectory(CurrentDataFileDirectory);
             }
         }
 
@@ -103,6 +100,18 @@ namespace DySenseKinectV2
             bool receivingOk = VerifyReceivingData();
 
             return receivingOk ? "normal" : "timed_out";
+        }
+
+        protected override void DriverHandleNewSetting(string settingName, object settingValue)
+        {
+            if (settingName == "data_file_directory")
+            {
+                // Data file directory might have changed so make sure directory exists.
+                if (!String.IsNullOrWhiteSpace(CurrentDataFileDirectory) && !Directory.Exists(CurrentDataFileDirectory))
+                {
+                    Directory.CreateDirectory(CurrentDataFileDirectory);
+                }
+            }
         }
 
         bool VerifyReceivingData()
@@ -209,24 +218,36 @@ namespace DySenseKinectV2
 
         string SaveColorImage(ColorFrame frame, string fileName)
         {
+            if (String.IsNullOrWhiteSpace(CurrentDataFileDirectory))
+            {
+                SendText("Can't save file. No valid directory.");
+            }
             ImageSource image = frame.ToBitmap();
-            string filePath = System.IO.Path.Combine(outDirectory, fileName);
+            string filePath = System.IO.Path.Combine(CurrentDataFileDirectory, fileName);
             Extensions.WriteJpeg(filePath, 90, (BitmapSource)image);
             return filePath;
         }
 
         string SaveInfraredImage(InfraredFrame frame, string fileName)
         {
+            if (String.IsNullOrWhiteSpace(CurrentDataFileDirectory))
+            {
+                SendText("Can't save file. No valid directory.");
+            }
             ImageSource image = frame.ToBitmap();
-            string filePath = System.IO.Path.Combine(outDirectory, fileName);
+            string filePath = System.IO.Path.Combine(CurrentDataFileDirectory, fileName);
             Extensions.WriteJpeg(filePath, 90, (BitmapSource)image);
             return filePath;
         }
 
         string SaveDepthData(ushort[] depthData, string fileName)
         {
+            if (String.IsNullOrWhiteSpace(CurrentDataFileDirectory))
+            {
+                SendText("Can't save file. No valid directory.");
+            }
             // write out depth data as binary file
-            string depthDataPath = System.IO.Path.Combine(outDirectory, fileName);
+            string depthDataPath = System.IO.Path.Combine(CurrentDataFileDirectory, fileName);
             using (FileStream fs = new FileStream(depthDataPath, FileMode.Create, FileAccess.Write))
             {
                 using (BinaryWriter bw = new BinaryWriter(fs))
@@ -243,7 +264,7 @@ namespace DySenseKinectV2
         string uniqueFileName(string id, string streamType, string fileExtension)
         {
             string formattedTime = DateTime.UtcNow.ToString("yyyyMMdd_hhmmss_fff");
-            return String.Format("KIN_{0}_{1}_{2}.{3}", id, formattedTime, streamType, fileExtension); 
+            return String.Format("{0}_{1}_{2}.{3}", id, formattedTime, streamType, fileExtension); 
         }
     }
 }

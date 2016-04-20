@@ -34,7 +34,13 @@ namespace DySenseKinectV2
             // TODO - try to get away from using a window at all. 
             BackgroundWorker programWorker = new BackgroundWorker();
             programWorker.DoWork += programWorker_DoWork;
+            programWorker.RunWorkerCompleted += programWorker_RunWorkerCompleted;
             programWorker.RunWorkerAsync(args);
+        }
+
+        void programWorker_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            this.Close();
         }
 
         void programWorker_DoWork(object sender, DoWorkEventArgs e)

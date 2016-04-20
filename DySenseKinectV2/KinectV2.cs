@@ -148,7 +148,7 @@ namespace DySenseKinectV2
             var reference = e.FrameReference.AcquireFrame();
             
             // Color
-            bool needToSaveColor = (SysTime - lastColorTime) > colorCapturePeriod;
+            bool needToSaveColor = (captureSysTime - lastColorTime) > colorCapturePeriod;
             if (colorEnabled && needToSaveColor)
             {
                 using (var frame = reference.ColorFrameReference.AcquireFrame())
@@ -168,7 +168,7 @@ namespace DySenseKinectV2
             }
 
             // Depth
-            bool needToSaveDepth = (SysTime - lastDepthTime) > depthCapturePeriod;
+            bool needToSaveDepth = (captureSysTime - lastDepthTime) > depthCapturePeriod;
             if (depthEnabled && needToSaveDepth)
             {
                 using (var frame = reference.DepthFrameReference.AcquireFrame())
@@ -196,7 +196,7 @@ namespace DySenseKinectV2
             }
 
             // Infrared
-            bool needToSaveInfrared = (SysTime - lastInfraredTime) > irCapturePeriod;
+            bool needToSaveInfrared = (captureSysTime - lastInfraredTime) > irCapturePeriod;
             if (infraredEnabled && needToSaveInfrared)
             {
                 using (var frame = reference.InfraredFrameReference.AcquireFrame())

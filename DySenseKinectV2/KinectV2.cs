@@ -44,9 +44,6 @@ namespace DySenseKinectV2
         int numDepthHandled = 0;
         int numInfraredHandled = 0;
 
-        // System time that SDK reader attempted to connect to sensor.
-        double readerCreatedSysTime = 0;
-
         public KinectV2(string sensorID, string instrumentID, Dictionary<string, object> settings, string connectEndpoint)
             : base(sensorID, instrumentID, connectEndpoint, decideTimeout: false)
         {
@@ -77,7 +74,6 @@ namespace DySenseKinectV2
                 reader = sensor.OpenMultiSourceFrameReader(FrameSourceTypes.Color | FrameSourceTypes.Depth | FrameSourceTypes.Infrared);
                 reader.MultiSourceFrameArrived += Reader_MultiSourceFrameArrived;
             }
-            readerCreatedSysTime = SysTime;
 
             if (!String.IsNullOrWhiteSpace(CurrentDataFileDirectory) && !Directory.Exists(CurrentDataFileDirectory))
             {
@@ -108,7 +104,7 @@ namespace DySenseKinectV2
             // Sensor data is recorded in the new frame event callback. This just checks if data is still coming in.
             bool receivingOk = VerifyReceivingData();
 
-            if (SysTime - readerCreatedSysTime < 3.0)
+            if (SecondSinceSensorSetup < 3.0)
             {
                 // Give the sensor time to startup at the beginning before complaining that we're not receiving data.
                 receivingOk = true;
@@ -283,7 +279,7 @@ namespace DySenseKinectV2
         {
             DateTime dateTime = new DateTime(1970, 1, 1, 0, 0, 0, 0, System.DateTimeKind.Utc);
             dateTime = dateTime.AddSeconds(utcTime);
-            string formattedTime = dateTime.ToString("yyyyMMdd_hhmmss_fff"); 
+            string formattedTime = dateTime.ToString("yyyyMMdd_hhmmss"); 
 
             return String.Format("{0}_{1}_{2}_{3}.{4}", id, formattedTime, streamType, fileNumber, fileExtension); 
         }

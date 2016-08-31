@@ -34,6 +34,10 @@ namespace DySenseKinectV2
         // Save depth data array so we can re-use it.
         ushort[] depthData;
 
+        // Size of depth data reported by sensor.
+        int depthDataWidth;
+        int depthDataHeight;
+
         // System time stamps of last read in images/data.
         double lastColorTime = 0;
         double lastDepthTime = 0;
@@ -125,6 +129,14 @@ namespace DySenseKinectV2
             }
         }
 
+        protected override void HandleSpecialCommand(string commandName, object commandArgs)
+        {
+            if (commandName == "report_distance")
+            {
+                ReportLastDistance();
+            }
+        }
+
         bool VerifyReceivingData()
         {
             // Need to use Math.Max() since the period could be 0 to signify max rate.
@@ -168,7 +180,7 @@ namespace DySenseKinectV2
                     {
                         lastColorTime = captureSysTime;
 
-                        string fileName = uniqueFileName(InstrumentID, captureUtcTime, "COLOR", numColorHandled, "jpg");
+                        string fileName = uniqueFileName(InstrumentID, captureUtcTime, "C", numColorHandled, "jpg");
                         if (ShouldRecordData()) 
                         {
                             SaveColorImage(frame, fileName);
@@ -189,19 +201,21 @@ namespace DySenseKinectV2
                     {
                         lastDepthTime = captureSysTime;
                         // If this is the first depth data we've gotten then initialize our array since we know how big the width/height is. More flexible than hardcoding.
+                        // Should be 512 x 424
                         if (depthData == null)
                         {
-                            int width = frame.FrameDescription.Width;
-                            int height = frame.FrameDescription.Height;
-                            depthData = new ushort[width * height];
+                            depthDataWidth = frame.FrameDescription.Width;
+                            depthDataHeight = frame.FrameDescription.Height;
+                            depthData = new ushort[depthDataWidth * depthDataHeight];
                         }
 
-                        string fileName = uniqueFileName(InstrumentID, captureUtcTime, "DEPTH", numDepthHandled, "bin");
+                        string fileName = uniqueFileName(InstrumentID, captureUtcTime, "D", numDepthHandled, "bin");
                         if (ShouldRecordData())
                         {
-                            frame.CopyFrameDataToArray(depthData);
                             SaveDepthData(depthData, fileName);
                         }
+                        // Copy data regardless of saving so we can report distance reading if user asks for it.
+                        frame.CopyFrameDataToArray(depthData);
                         HandleData(captureUtcTime, SysTime, new List<object>() { "depth", fileName });
                         numDepthHandled++;
                     }
@@ -218,12 +232,12 @@ namespace DySenseKinectV2
                     {
                         lastInfraredTime = captureSysTime;
 
-                        string fileName = uniqueFileName(InstrumentID, captureUtcTime, "IR", numInfraredHandled, "jpg");
+                        string fileName = uniqueFileName(InstrumentID, captureUtcTime, "I", numInfraredHandled, "jpg");
                         if (ShouldRecordData())
                         {
                             SaveInfraredImage(frame, fileName);
                         }
-                        HandleData(captureUtcTime, SysTime, new List<object>() { "infrared", fileName });
+                        HandleData(captureUtcTime, SysTime, new List<object>() { "ir", fileName });
                         numInfraredHandled++;
                     }
                 }
@@ -273,6 +287,53 @@ namespace DySenseKinectV2
                 }
             }
             return depthDataPath;
+        }
+
+        void ReportLastDistance()
+        {
+            if (depthData == null)
+            {
+                SendText("No depth image received yet.");
+                return;
+            }
+
+            // Define a square patch of readings in the middle of the depth image
+            // to sample from.  The side length is the side of this patch.
+            int sideLength = (int)(0.1 * Math.Min(depthDataWidth, depthDataHeight));
+            int startRow = (depthDataHeight / 2) - (sideLength / 2);
+            int endRow = (depthDataHeight / 2) + (sideLength / 2);
+            int startColumn = (depthDataWidth / 2) - (sideLength / 2);
+            int endColumn = (depthDataWidth / 2) + (sideLength / 2);
+
+            uint depthSum = 0;
+            uint numSamples = 0;
+
+            for (int r = startRow; r < endRow; ++r)
+            {
+                for (int c = startColumn; c < endColumn; ++c)
+                {
+                    UInt16 depthValue = depthData[r * depthDataWidth + c];
+                    if (depthValue == 0)
+                    {
+                        continue; // No depth data returned for this pixel.
+                    }
+                    depthSum += depthValue;
+                    numSamples++;
+                }
+            }
+
+            if (depthSum == 0)
+            {
+                SendText("No valid distance readings found in center of depth image.");
+                return;
+            }
+
+            double averageDepth = Convert.ToDouble(depthSum) / numSamples;
+
+            // Convert from millimeters to meters.
+            averageDepth /= 1000.0;
+
+            SendText(String.Format("Last distance {0:0.000} meters recorded {1:0.00} seconds ago.", averageDepth, SysTime - lastDepthTime));
         }
 
         string uniqueFileName(string id, double utcTime, string streamType, int fileNumber, string fileExtension)
